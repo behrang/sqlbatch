@@ -9,9 +9,12 @@ import (
 // Command format for sending a batch of sql commands.
 // Query is the sql query to execute (required).
 // ArgsFunc is called before execution for query arguments (optional).
+// It will be passed current results.
 // Args are query parameters (optional). Ignored if ArgsFunc is non-nil.
-// ScanOnce is the scan function for reading at most one row (optional).
+// Memo is the default value passed to first iteration of Scan.
+// Following iterations will use the previous memo returned by Scan.
 // Scan is the scan function for reading each row (optional).
+// ScanOnce is the scan function for reading at most one row (optional).
 // If ScanOnce is non-nil, Scan is ignored.
 // Affect is the number of rows that should be affected.
 // If Affect is zero (default), it is not checked.
@@ -19,45 +22,34 @@ import (
 // If Affect is positive, that should be the number of affected rows.
 type Command struct {
 	Query    string
-	ArgsFunc func() []interface{}
+	ArgsFunc func([]interface{}) []interface{}
 	Args     []interface{}
-	ScanOnce func(fn func(...interface{}) error) error
-	Scan     func(fn func(...interface{}) error) error
+	Memo     interface{}
+	Scan     func(memo interface{}, fn func(...interface{}) error) (interface{}, error)
+	ScanOnce func(fn func(...interface{}) error) (interface{}, error)
 	Affect   int64
 }
 
-// Handler contains the database handle.
-type Handler struct {
-	db *sql.DB
-}
-
-// New creates a new handler for handling batch SQL operations.
-func New(db *sql.DB) Handler {
-	return Handler{db: db}
-}
-
 // Batch executes a batch of commands in a single transaction.
-// If any error occurs, the transaction will be rolled back.
-func (handler Handler) Batch(commands []Command) error {
-	tx, err := handler.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
+// It will return a results, and an error. Results will include
+// the result returned by Scan or ScanOnce for each command
+// at the specific index.
+func Batch(tx *sql.Tx, commands []Command) ([]interface{}, error) {
 
-	for _, command := range commands {
+	results := make([]interface{}, len(commands))
+	for i, command := range commands {
 		args := command.Args
 		if command.ArgsFunc != nil {
-			args = command.ArgsFunc()
+			args = command.ArgsFunc(results)
 		}
 		if command.Affect != 0 {
 			result, err := tx.Exec(command.Query, args...)
 			if err != nil {
-				return err
+				return results, err
 			}
 			affected, err := result.RowsAffected()
 			if err != nil {
-				return err
+				return results, err
 			}
 			expected := command.Affect
 			if expected < 0 {
@@ -65,41 +57,42 @@ func (handler Handler) Batch(commands []Command) error {
 			}
 			if expected != affected {
 				err = fmt.Errorf(expectedDifferentAffectedRows, expected, affected, command.Query)
-				return err
+				return results, err
 			}
 		} else {
 			rows, err := tx.Query(command.Query, args...)
 			if err != nil {
-				return err
+				return results, err
 			}
 			if command.ScanOnce != nil {
 				if rows.Next() {
-					err = command.ScanOnce(rows.Scan)
+					result, err := command.ScanOnce(rows.Scan)
 					if err != nil {
-						return err
+						return results, err
 					}
+					results[i] = result
 				}
 			} else if command.Scan != nil {
+				memo := command.Memo
 				for rows.Next() {
-					err = command.Scan(rows.Scan)
+					memo, err = command.Scan(memo, rows.Scan)
 					if err != nil {
-						return err
+						return results, err
 					}
 				}
+				results[i] = memo
 			}
 			if err = rows.Err(); err != nil {
 				rows.Close()
-				return err
+				return results, err
 			}
 			err = rows.Close()
 			if err != nil {
-				return err
+				return results, err
 			}
 		}
 	}
-
-	tx.Commit()
-	return nil
+	return results, nil
 }
 
 const expectedDifferentAffectedRows = "Expected to affect %v rows, but %v rows affected for query: `%v`"

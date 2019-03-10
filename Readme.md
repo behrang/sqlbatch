@@ -10,28 +10,16 @@ go get -u github.com/behrang/sqlbatch
 
 ## Usage
 
-First create a connection pool for your database, for example:
-
 ```go
 db := sql.Open("postgres", "connectionInfo")
-```
-
-Then create a batch handler:
-
-```go
-batchHandler := sqlbatch.New(db)
-```
-
-Then to execute a batch of commands:
-
-```go
-var dynamicParam int
-people := make([]Person, 0)
-err := batchHandler.Batch([]Command{
+tx := db.BeginTx(context.Background(), nil)
+results, err := sqlbatch.Batch(tx, []Command{
     {
         Query: `A SQL query`,
-        Scan: func(scan func(...interface{}) error) error {
-            return scan(&dynamicParam)
+        ScanOnce: func(scan func(...interface{}) error) (interface{}, error) {
+            var x int
+            err := scan(&x)
+            return x, err
         },
     },
     {
@@ -41,17 +29,27 @@ err := batchHandler.Batch([]Command{
     },
     {
         Query: `Yet another SQL query to scan results with a dynamic param $1`,
-        ArgsFunc: func() []interface{} {
-            return []interface{}{dynamicParam}
+        ArgsFunc: func(results []interface{}) []interface{} {
+            return []interface{}{results[0].(int)}
         },
-        Scan: func(scan func(...interface{}) error) error {
+        Memo: make([]Person, 0),
+        Scan: func(memo interface{}, scan func(...interface{}) error) (interface{}, error) {
             p := Person{}
             err := scan(&p.Name, &p.Age)
+            people := memo.([]Person)
             people = append(people, person)
-            return err
+            return people, err
         },
     }
 })
+if err != nil {
+    tx.Rollback()
+} else {
+    tx.Commit()
+    x, _ := results[0].(int)
+    people, _ := results[2].([]Person)
+    fmt.Println(x, people)
+}
 ```
 
 If any of the queries fail, transaction will be rolled back.
@@ -60,14 +58,10 @@ If any of the queries fail, transaction will be rolled back.
 
 `Args` provides arguments to the SQL prepared statement. These args should be final at the time of batch command creation.
 
-`ArgsFunc` provides dynamic parameters to the SQL prepared statement. If args for a query need to be calculated from other queries in the same batch, use this function.
+`ArgsFunc` provides dynamic parameters to the SQL prepared statement. If args for a query need to be calculated from results of other queries in the same batch, use this function.
 
-`Scan` scans each row of the results. If an error is returned, transaction will be rolled back.
+`Scan` scans each row of the results. If an error is returned, transaction will be rolled back. A `memo` object can be used to add all results together, for example in an array or map. `Memo` is the default value passed to first iteration of `Scan`.
 
 `ScanOnce` scans at most one row. More rows will be ignored. If no row exists, nothing will be scanned. If an error is returned, transaction will be rolled back.
 
 If no error occurs, the transaction will be committed. If an error occurs while commiting, the error is returned. Intermediary rows and result sets are cleaned up.
-
-## License
-
-MIT
