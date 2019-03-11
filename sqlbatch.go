@@ -11,11 +11,11 @@ import (
 // ArgsFunc is called before execution for query arguments (optional).
 // It will be passed current results.
 // Args are query parameters (optional). Ignored if ArgsFunc is non-nil.
-// Memo is the default value passed to first iteration of Scan.
-// Following iterations will use the previous memo returned by Scan.
-// Scan is the scan function for reading each row (optional).
-// ScanOnce is the scan function for reading at most one row (optional).
-// If ScanOnce is non-nil, Scan is ignored.
+// Init is the default value passed to first iteration of ReadAll.
+// Following iterations will use the previous memo returned by ReadAll.
+// ReadAll is the read function for reading all rows (optional).
+// ReadOne is the read function for reading at most one row (optional).
+// If ReadOne is non-nil, ReadAll is ignored.
 // Affect is the number of rows that should be affected.
 // If Affect is zero (default), it is not checked.
 // If Affect is negative, no rows should be affected.
@@ -24,15 +24,15 @@ type Command struct {
 	Query    string
 	ArgsFunc func([]interface{}) []interface{}
 	Args     []interface{}
-	Memo     interface{}
-	Scan     func(memo interface{}, fn func(...interface{}) error) (interface{}, error)
-	ScanOnce func(fn func(...interface{}) error) (interface{}, error)
+	Init     interface{}
+	ReadAll  func(memo interface{}, fn func(...interface{}) error) (interface{}, error)
+	ReadOne  func(fn func(...interface{}) error) (interface{}, error)
 	Affect   int64
 }
 
 // Batch executes a batch of commands in a single transaction.
 // It will return a results, and an error. Results will include
-// the result returned by Scan or ScanOnce for each command
+// the result returned by ReadAll or ReadOne for each command
 // at the specific index.
 func Batch(tx *sql.Tx, commands []Command) ([]interface{}, error) {
 
@@ -64,18 +64,18 @@ func Batch(tx *sql.Tx, commands []Command) ([]interface{}, error) {
 			if err != nil {
 				return results, err
 			}
-			if command.ScanOnce != nil {
+			if command.ReadOne != nil {
 				if rows.Next() {
-					result, err := command.ScanOnce(rows.Scan)
+					result, err := command.ReadOne(rows.Scan)
 					if err != nil {
 						return results, err
 					}
 					results[i] = result
 				}
-			} else if command.Scan != nil {
-				memo := command.Memo
+			} else if command.ReadAll != nil {
+				memo := command.Init
 				for rows.Next() {
-					memo, err = command.Scan(memo, rows.Scan)
+					memo, err = command.ReadAll(memo, rows.Scan)
 					if err != nil {
 						return results, err
 					}

@@ -16,7 +16,7 @@ tx := db.BeginTx(context.Background(), nil)
 results, err := sqlbatch.Batch(tx, []Command{
     {
         Query: `A SQL query`,
-        ScanOnce: func(scan func(...interface{}) error) (interface{}, error) {
+        ReadOne: func(scan func(...interface{}) error) (interface{}, error) {
             var x int
             err := scan(&x)
             return x, err
@@ -32,8 +32,8 @@ results, err := sqlbatch.Batch(tx, []Command{
         ArgsFunc: func(results []interface{}) []interface{} {
             return []interface{}{results[0].(int)}
         },
-        Memo: make([]Person, 0),
-        Scan: func(memo interface{}, scan func(...interface{}) error) (interface{}, error) {
+        Init: make([]Person, 0),
+        ReadAll: func(memo interface{}, scan func(...interface{}) error) (interface{}, error) {
             p := Person{}
             err := scan(&p.Name, &p.Age)
             people := memo.([]Person)
@@ -60,8 +60,8 @@ If any of the queries fail, transaction will be rolled back.
 
 `ArgsFunc` provides dynamic parameters to the SQL prepared statement. If args for a query need to be calculated from results of other queries in the same batch, use this function.
 
-`Scan` scans each row of the results. If an error is returned, transaction will be rolled back. A `memo` object can be used to add all results together, for example in an array or map. `Memo` is the default value passed to first iteration of `Scan`.
+`ReadAll` scans each row of the results. If an error is returned, transaction will be rolled back. A `memo` object can be used to add all results together, for example in an array or map. `Init` is the default value passed to first iteration of `ReadAll`.
 
-`ScanOnce` scans at most one row. More rows will be ignored. If no row exists, nothing will be scanned. If an error is returned, transaction will be rolled back.
+`ReadOne` scans at most one row. More rows will be ignored. If no row exists, nothing will be scanned. If an error is returned, transaction will be rolled back.
 
 If no error occurs, the transaction will be committed. If an error occurs while commiting, the error is returned. Intermediary rows and result sets are cleaned up.
