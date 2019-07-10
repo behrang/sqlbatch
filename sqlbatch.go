@@ -64,6 +64,7 @@ func Batch(tx *sql.Tx, commands []Command) ([]interface{}, error) {
 			if err != nil {
 				return results, err
 			}
+			defer rows.Close()
 			if command.ReadOne != nil {
 				if rows.Next() {
 					result, err := command.ReadOne(rows.Scan)
@@ -83,7 +84,6 @@ func Batch(tx *sql.Tx, commands []Command) ([]interface{}, error) {
 				results[i] = memo
 			}
 			if err = rows.Err(); err != nil {
-				rows.Close()
 				return results, err
 			}
 			err = rows.Close()
